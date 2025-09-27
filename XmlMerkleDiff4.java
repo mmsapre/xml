@@ -68,18 +68,24 @@ public final class XmlMerkleDiff {
     return cs;
   }
 
-  /** Return de-noised, index-free changed paths + all their ancestor subpaths (no #text). */
+  
   public static Set<String> collapsedChangedPaths(ChangeSet cs) {
     Set<String> collapsed = new LinkedHashSet<>();
-    for (Changed c : cs.changed) {
-      String norm = normalizePathWithoutText(c.path);
-      addWithAncestors(norm, collapsed);
+    if (cs.changed.isEmpty() && !cs.added.isEmpty()) {
+        // if all added, include ancestors from added paths
+        for (String p : cs.added) addWithAncestors(normalizePathWithoutText(p), collapsed);
+    } else {
+        for (Changed c : cs.changed) addWithAncestors(normalizePathWithoutText(c.path), collapsed);
     }
-    // include ancestors for added/removed too (useful when old is empty)
-    for (String p : cs.added)  { addWithAncestors(normalizePathWithoutText(p), collapsed); }
-    for (String p : cs.removed){ addWithAncestors(normalizePathWithoutText(p), collapsed); }
+    // Always add root if we have any change
+    if (!collapsed.isEmpty()) {
+        String root = collapsed.iterator().next();
+        int idx = root.indexOf('/', 1);
+        if (idx > 0) collapsed.add(root.substring(0, idx)); // add just root element
+    }
     return collapsed;
-  }
+}
+
 
   /** Build tag-level summary (elements + attributes) with ADDED/REMOVED/CHANGED. */
   public static TagSummary summarizeTagChanges(ChangeSet cs) {
