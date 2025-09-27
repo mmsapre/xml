@@ -132,4 +132,60 @@ static String normalizePathWithoutText(String canonical) {
     s = s.replaceAll("/{2,}", "/");                 // collapse double slashes
     return s;
   }
+
+
+ enum ChangeType { ADDED, REMOVED, CHANGED }
+
+  static final class TagSummary {
+    final Map<String, Set<String>> elements = new TreeMap<>();
+    final Map<String, Set<String>> attributes = new TreeMap<>();
+    void markElement(String tag, ChangeType t) {
+      elements.computeIfAbsent(tag, k -> new TreeSet<>()).add(t.name());
+    }
+    void markAttribute(String attr, ChangeType t) {
+      attributes.computeIfAbsent(attr, k -> new TreeSet<>()).add(t.name());
+    }
+  }
+
+  static TagSummary summarizeTagChanges(ChangeSet cs) {
+    TagSummary ts = new TagSummary();
+    for (String p : cs.added) emitTag(ts, normalizePathWithoutText(p), ChangeType.ADDED);
+    for (String p : cs.removed) emitTag(ts, normalizePathWithoutText(p), ChangeType.REMOVED);
+    for (Changed c : cs.changed) emitTag(ts, normalizePathWithoutText(c.path), ChangeType.CHANGED);
+    return ts;
+  }
+
+  static void emitTag(TagSummary ts, String normalizedPath, ChangeType ct) {
+    if (normalizedPath == null || normalizedPath.isEmpty()) return;
+    String[] parts = normalizedPath.split("/");
+    if (parts.length == 0) return;
+    String last = parts[parts.length - 1];
+    if (last.startsWith("@")) {
+      ts.markAttribute(last, ct);
+      if (parts.length >= 2) {
+        String parent = parts[parts.length - 2];
+        if (!parent.startsWith("@")) ts.markElement(parent, ChangeType.CHANGED);
+      }
+    } else {
+      ts.markElement(last, ct);
+    }
+  }
+
+  static void printTagSummary(TagSummary ts) {
+    System.out.println("\n--- Tag change summary ---");
+    if (ts.elements.isEmpty() && ts.attributes.isEmpty()) {
+      System.out.println("(no tag-level changes)");
+      return;
+    }
+    if (!ts.elements.isEmpty()) {
+      System.out.println("Elements:");
+      ts.elements.forEach((tag, ops) ->
+          System.out.println("  " + tag + " : " + String.join(",", ops)));
+    }
+    if (!ts.attributes.isEmpty()) {
+      System.out.println("Attributes:");
+      ts.attributes.forEach((attr, ops) ->
+          System.out.println("  " + attr + " : " + String.join(",", ops)));
+    }
+  }
 }
