@@ -1,0 +1,125 @@
+// XmlMerkleDiffDemo.java
+import java.util.*;
+
+public class XmlMerkleDiffDemo {
+
+  static class ChangeSet {
+    final List<String> added = new ArrayList<>();
+    final List<String> removed = new ArrayList<>();
+    final List<Changed> changed = new ArrayList<>();
+  }
+  static class Changed {
+    final String path; final String oldHashHex; final String newHashHex;
+    Changed(String p, byte[] oldH, byte[] newH) {
+      this.path = p; this.oldHashHex = MerkleCTree.hex(oldH); this.newHashHex = MerkleCTree.hex(newH);
+    }
+  }
+
+  static ChangeSet diff(XmlPathMerkle.Result oldR, XmlPathMerkle.Result newR) {
+    ChangeSet cs = new ChangeSet();
+    Set<String> all = new TreeSet<>();
+    all.addAll(oldR.pathValueHashes.keySet());
+    all.addAll(newR.pathValueHashes.keySet());
+
+    for (String p : all) {
+      byte[] oh = oldR.pathValueHashes.get(p);
+      byte[] nh = newR.pathValueHashes.get(p);
+      if (oh == null && nh != null) cs.added.add(p);
+      else if (oh != null && nh == null) cs.removed.add(p);
+      else if (oh != null && nh != null && !Arrays.equals(oh, nh)) cs.changed.add(new Changed(p, oh, nh));
+    }
+    return cs;
+  }
+
+  public static void main(String[] args) throws Exception {
+    // v1
+    String xml1 = "<Order xmlns=\"urn:ex\">"
+        + "<Item sku=\"A\"><Qty>2</Qty></Item>"
+        + "<Item sku=\"B\"><Qty>1</Qty></Item>"
+        + "</Order>";
+    // v2 (siblings reordered, B's Qty changed 1 -> 3)
+    String xml2 = "<Order xmlns=\"urn:ex\">"
+        + "<Item sku=\"B\"><Qty>3</Qty></Item>"
+        + "<Item sku=\"A\"><Qty>2</Qty></Item>"
+        + "</Order>";
+
+    XmlPathMerkle.Result r1 = XmlPathMerkle.build(xml1);
+    XmlPathMerkle.Result r2 = XmlPathMerkle.build(xml2);
+
+    System.out.println("Root v1 = " + MerkleCTree.hex(r1.root));
+    System.out.println("Root v2 = " + MerkleCTree.hex(r2.root));
+
+    ChangeSet cs = diff(r1, r2);
+
+    System.out.println("\n=== ADDED (" + cs.added.size() + ") ===");
+    cs.added.forEach(System.out::println);
+
+    System.out.println("\n=== REMOVED (" + cs.removed.size() + ") ===");
+    cs.removed.forEach(System.out::println);
+
+    System.out.println("\n=== CHANGED (" + cs.changed.size() + ") ===");
+    for (Changed c : cs.changed) {
+      System.out.println(c.path);
+      System.out.println("  oldHash=" + c.oldHashHex);
+      System.out.println("  newHash=" + c.newHashHex);
+    }
+
+    // NEW: after printing changes, also print collapsed paths (no [#...]) and their subpaths
+    printCollapsedChangedPathsWithAncestors(cs.changed);
+  }
+
+  /**
+   * After the detailed change list, print a concise, human-friendly view:
+   *  - remove canonical indices like [#0], [#12]
+   *  - normalize attribute paths ".@attr" -> "/@attr"
+   *  - normalize text paths ".#text[#k]" -> "/#text"
+   *  - also include ancestor subpaths for quick filtering/routing
+   */
+  static void printCollapsedChangedPathsWithAncestors(List<Changed> changed) {
+    System.out.println("\n--- Collapsed changed paths (no indices) & ancestors ---");
+
+    // Use LinkedHashSet to preserve insertion order while deduplicating
+    Set<String> collapsed = new LinkedHashSet<>();
+    for (Changed c : changed) {
+      String norm = normalizePath(c.path);
+      addWithAncestors(norm, collapsed);
+    }
+    // Print unique, normalized paths with ancestors
+    for (String p : collapsed) System.out.println(p);
+  }
+
+  /** Normalize a canonical XML path by removing [#k] and prettifying attributes/text. */
+  static String normalizePath(String canonical) {
+    String s = canonical;
+    // remove canonical indices [#123]
+    s = s.replaceAll("\\[#\\d+\\]", "");
+    // remove any raw numeric indices just in case (not used here, but safe)
+    s = s.replaceAll("\\[\\d+\\]", "");
+    // attributes ".@ns|name" or ".@name" -> "/@ns|name" or "/@name"
+    s = s.replaceAll("\\.@", "/@");
+    // text ".#text[#k]" or ".#text" -> "/#text"
+    s = s.replaceAll("\\.#text(?:\\[#\\d+\\])?", "/#text");
+    // drop empty markers if present
+    s = s.replaceAll("\\.__empty(Element|Array|Object)", "");
+    // collapse any accidental double slashes
+    s = s.replaceAll("/{2,}", "/");
+    return s;
+  }
+
+  /** Add the path and all its ancestor prefixes into the set. */
+  static void addWithAncestors(String path, Set<String> out) {
+    // Split by '/' but keep leading '/' as root indicator
+    if (path == null || path.isEmpty()) return;
+    if (!path.startsWith("/")) { out.add(path); return; }
+
+    String[] parts = path.substring(1).split("/"); // remove leading '/'
+    StringBuilder cur = new StringBuilder();
+    cur.append("/");
+    for (int i = 0; i < parts.length; i++) {
+      if (parts[i].isEmpty()) continue;
+      if (cur.length() > 1) cur.append("/");
+      cur.append(parts[i]);
+      out.add(cur.toString());
+    }
+  }
+}
