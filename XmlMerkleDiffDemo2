@@ -122,4 +122,14 @@ public class XmlMerkleDiffDemo {
       out.add(cur.toString());
     }
   }
+
+static String normalizePathWithoutText(String canonical) {
+    String s = canonical;
+    s = s.replaceAll("\\[#\\d+\\]", "");            // remove canonical indices
+    s = s.replaceAll("\\.#text(?:\\[#\\d+\\])?", ""); // remove text segments entirely
+    s = s.replaceAll("\\.@", "/@");                 // attributes
+    s = s.replaceAll("\\.__empty(Element|Array|Object)", "");
+    s = s.replaceAll("/{2,}", "/");                 // collapse double slashes
+    return s;
+  }
 }
