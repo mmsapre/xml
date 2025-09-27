@@ -26,8 +26,8 @@ public final class XmlMerkleDiff {
   public enum ChangeType { ADDED, REMOVED, CHANGED }
 
   public static final class TagSummary {
-    public final Map<String, Set<String>> elements = new TreeMap<>();   // tagName -> ops
-    public final Map<String, Set<String>> attributes = new TreeMap<>(); // @attr -> ops
+    public final Map<String, Set<String>> elements = new TreeMap<>();
+    public final Map<String, Set<String>> attributes = new TreeMap<>();
     void markElement(String tag, ChangeType t) {
       elements.computeIfAbsent(tag, k -> new TreeSet<>()).add(t.name());
     }
@@ -40,7 +40,7 @@ public final class XmlMerkleDiff {
 
   /** Build the structured diff between two XML strings (xmlOld can be null/blank). */
   public static ChangeSet diff(String xmlOld, String xmlNew) throws Exception {
-    XmlPathMerkle.Result oldR = (xmlOld == null || xmlOld.isBlank()) ? null : XmlPathMerkle.build(xmlOld);
+    XmlPathMerkle.Result oldR = (xmlOld == null || xmlOld.trim().isEmpty()) ? null : XmlPathMerkle.build(xmlOld);
     XmlPathMerkle.Result newR = XmlPathMerkle.build(xmlNew);
     return diff(oldR, newR);
   }
@@ -61,37 +61,44 @@ public final class XmlMerkleDiff {
     for (String p : all) {
       byte[] oh = oldR.pathValueHashes.get(p);
       byte[] nh = newR.pathValueHashes.get(p);
-      if (oh == null && nh != null) cs.added.add(p);
-      else if (oh != null && nh == null) cs.removed.add(p);
-      else if (oh != null && nh != null && !Arrays.equals(oh, nh)) cs.changed.add(new Changed(p, oh, nh));
+
+      if (oh == null && nh != null) {
+        cs.added.add(p);
+      } else if (oh != null && nh == null) {
+        cs.removed.add(p);
+      } else if (oh != null && nh != null && !Arrays.equals(oh, nh)) {
+        // 🔎 keep ONLY leaf value changes: text nodes or attributes
+        if (isValueLeafPath(p)) {
+          cs.changed.add(new Changed(p, oh, nh));
+        }
+      }
     }
     return cs;
   }
 
-  
+  /** Return de-noised, index-free changed paths + all their ancestor subpaths (no #text) and always include root. */
   public static Set<String> collapsedChangedPaths(ChangeSet cs) {
     Set<String> collapsed = new LinkedHashSet<>();
-    if (cs.changed.isEmpty() && !cs.added.isEmpty()) {
-        // if all added, include ancestors from added paths
-        for (String p : cs.added) addWithAncestors(normalizePathWithoutText(p), collapsed);
-    } else {
-        for (Changed c : cs.changed) addWithAncestors(normalizePathWithoutText(c.path), collapsed);
-    }
-    // Always add root if we have any change
+
+    // include ancestors for ALL categories so empty-baseline (all-added) also works
+    for (String p : cs.added)   addWithAncestors(normalizePathWithoutText(p), collapsed);
+    for (String p : cs.removed) addWithAncestors(normalizePathWithoutText(p), collapsed);
+    for (Changed c : cs.changed) addWithAncestors(normalizePathWithoutText(c.path), collapsed);
+
+    // Always ensure the root is present if we had any path at all
     if (!collapsed.isEmpty()) {
-        String root = collapsed.iterator().next();
-        int idx = root.indexOf('/', 1);
-        if (idx > 0) collapsed.add(root.substring(0, idx)); // add just root element
+      String any = collapsed.iterator().next();          // e.g., "/urn:ex|Order/urn:ex|Item"
+      String root = extractRoot(any);                    // -> "/urn:ex|Order"
+      if (root != null) collapsed.add(root);
     }
     return collapsed;
-}
-
+  }
 
   /** Build tag-level summary (elements + attributes) with ADDED/REMOVED/CHANGED. */
   public static TagSummary summarizeTagChanges(ChangeSet cs) {
     TagSummary ts = new TagSummary();
-    for (String p : cs.added)  emitTag(ts, normalizePathWithoutText(p), ChangeType.ADDED);
-    for (String p : cs.removed)emitTag(ts, normalizePathWithoutText(p), ChangeType.REMOVED);
+    for (String p : cs.added)    emitTag(ts, normalizePathWithoutText(p), ChangeType.ADDED);
+    for (String p : cs.removed)  emitTag(ts, normalizePathWithoutText(p), ChangeType.REMOVED);
     for (Changed c : cs.changed) emitTag(ts, normalizePathWithoutText(c.path), ChangeType.CHANGED);
     return ts;
   }
@@ -135,9 +142,14 @@ public final class XmlMerkleDiff {
 
   // ---------------- Helpers ----------------
 
+  /** Keep only value leaves: attributes (.@...) and text nodes (.#text[#k]). */
+  private static boolean isValueLeafPath(String canonicalPath) {
+    return canonicalPath.contains(".@") || canonicalPath.contains(".#text[");
+  }
+
   /** Remove [#k], drop #text, render attributes as /@attr, and tidy slashes. */
   public static String normalizePathWithoutText(String canonical) {
-    String s = canonical;
+    String s = canonical == null ? "" : canonical;
     s = s.replaceAll("\\[#\\d+\\]", "");              // remove canonical indices
     s = s.replaceAll("\\.#text(?:\\[#\\d+\\])?", ""); // drop text segments entirely
     s = s.replaceAll("\\.@", "/@");                   // attributes
@@ -181,5 +193,13 @@ public final class XmlMerkleDiff {
       out.put(e.getKey(), new ArrayList<>(e.getValue()));
     }
     return out;
+  }
+
+  /** Extract "/root" from a path like "/root/...". */
+  private static String extractRoot(String anyPath) {
+    if (anyPath == null || !anyPath.startsWith("/")) return null;
+    int secondSlash = anyPath.indexOf('/', 1);
+    if (secondSlash == -1) return anyPath;            // it was just "/root"
+    return anyPath.substring(0, secondSlash);         // "/root"
   }
 }
