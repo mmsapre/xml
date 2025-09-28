@@ -253,6 +253,29 @@ public final class XmlMerkleDiff {
     return base;
   }
 
+  // ---- Missing helpers for path normalization (XML) ----
+private static Set<String> normalizeSetDirect(List<String> raw) {
+  Set<String> out = new LinkedHashSet<String>();
+  if (raw == null) return out;
+  for (String p : raw) {
+    String n = normalizePathWithoutText(p);
+    if (n != null && n.length() > 0 && !"/".equals(n)) out.add(n);
+  }
+  return out;
+}
+
+private static Set<String> normalizeSetWithAncestors(List<String> raw) {
+  Set<String> out = new LinkedHashSet<String>();
+  if (raw == null) return out;
+  for (String p : raw) {
+    String n = normalizePathWithoutText(p);
+    if (n != null && n.length() > 0) addWithAncestors(n, out);
+  }
+  // prune accidental root-only empties
+  out.remove(""); out.remove("/");
+  return out;
+}
+
   // ---------------- Payload (unchanged, uses direct collapsed paths) ----------------
 
   public static Map<String,Object> buildPayload(XmlPathMerkle.Result oldR, XmlPathMerkle.Result newR, ChangeSet cs) {
